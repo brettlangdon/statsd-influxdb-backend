@@ -1,6 +1,7 @@
 StatsD InfluxDB backend
 -----------------------
-**My Changes**
+**My Changes**:
+
 This repo is my own modifications to the original [statsd-influxdb-backend](https://github.com/bernd/statsd-influxdb-backend).
 * Proxy Flush is the only options now
 * Added Support for Sample Rates on Timing and Counter metrics
