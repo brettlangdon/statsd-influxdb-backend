@@ -1,21 +1,13 @@
 StatsD InfluxDB backend
 -----------------------
+**My Changes**
+This repo is my own modifications to the original [statsd-influxdb-backend](https://github.com/bernd/statsd-influxdb-backend).
+* Proxy Flush is the only options now
+* Added Support for Sample Rates on Timing and Counter metrics
+* Added support for [dogstatsd](https://github.com/DataDog/dogstatsd-python) tags, `foo:1|c|#tag,key=value`
 
 A naive [InfluxDB](http://influxdb.org/) backend for
 [StatsD](https://github.com/etsy/statsd).
-
-It can ship events to InfluxDB using two different strategies which can be
-used at the same time.
-
-### Regular Flush Strategy
-
-StatsD will flush aggregated metrics with a configured interval. This is
-the regular StatsD mode of operation.
-
-### Proxy Strategy
-
-This will map every incoming StatsD packet to an InfluxDB event. It's useful
-if you want to store the raw events in InfluxDB without any rollups.
 
 ## CAVEATS
 
@@ -45,15 +37,7 @@ You can configure the following settings in your StatsD config file.
     database: 'dbname',  // InfluxDB database instance. (required)
     username: 'user',    // InfluxDB database username. (required)
     password: 'pass',    // InfluxDB database password. (required)
-    flush: {
-      enable: true       // Enable regular flush strategy. (default true)
-    },
-    proxy: {
-      enable: false,       // Enable the proxy strategy. (default false)
-      suffix: 'raw',       // Metric name suffix. (default 'raw')
-      flushInterval: 1000  // Flush interval for the internal buffer.
-                           // (default 1000)
-    }
+    flushInterval: 1000  // Flush interval for the internal buffer. (default 1000)
   }
 }
 ```
@@ -71,13 +55,6 @@ file and restart the StatsD process.
 
 ## Unsupported Metric Types
 
-#### Flush Strategy
-
-* Sets
-
-#### Proxy Strategy
-
-* Counter with sampling.
 * Signed gauges. (i.e. `bytes:+4|g`)
 * Sets
 
@@ -86,28 +63,31 @@ file and restart the StatsD process.
 StatsD packets are currently mapped to the following InfluxDB events. This is
 a first try and I'm open to suggestions to improve this.
 
+### Tags
+
+Tags are **NOT** a supported feature of [StatsD](https://github.com/etsy/statsd),
+it is a feature used by [Datadog](https://datadoghq.com) ([dogstatsd-python](https://github.com/datadog/dogstatsd-python)).
+
+Tags are appended to the end of the StatsD metric, separated by commas and prefixed with a hash (#).
+`foo:1|c|#tags,are=cool` becomes:
+```js
+[
+  {
+    name: 'requests.counter',
+    columns: ['value', 'time', 'tags', 'are'],
+    points: [[1, 1384472029572, true, 'cool']]
+  }
+]
+```
+
 ### Counter
 
 StatsD packet `requests:1|c` as InfluxDB event:
-
-#### Flush Strategy
 
 ```js
 [
   {
     name: 'requests.counter',
-    columns: ['value', 'time'],
-    points: [[802, 1384798553000]]
-  }
-]
-```
-
-#### Proxy Strategy
-
-```js
-[
-  {
-    name: 'requests.counter.raw',
     columns: ['value', 'time'],
     points: [[1, 1384472029572]]
   }
@@ -118,74 +98,10 @@ StatsD packet `requests:1|c` as InfluxDB event:
 
 StatsD packet `response_time:170|ms` as InfluxDB event:
 
-#### Flush Strategy
-
 ```js
 [
   {
-    name: 'response_time.timer.mean_90',
-    columns: ['value', 'time'],
-    points: [[445.25761772853184, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.upper_90',
-    columns: ['value', 'time'],
-    points: [[905, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.sum_90',
-    columns: ['value', 'time'],
-    points: [[321476, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.std',
-    columns: ['value', 'time'],
-    points: [[294.4171159604542, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.upper',
-    columns: ['value', 'time'],
-    points: [[998, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.lower',
-    columns: ['value', 'time'],
-    points: [[2, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.count',
-    columns: ['value', 'time'],
-    points: [[802, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.count_ps',
-    columns: ['value', 'time'],
-    points: [[80.2, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.sum',
-    columns: ['value', 'time'],
-    points: [[397501, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.mean',
-    columns: ['value', 'time'],
-    points: [[495.6371571072319, 1384798553000]]
-  },
-  {
-    name: 'response_time.timer.median',
-    columns: ['value', 'time'],
-    points: [[483, 1384798553000]]
-  }
-]
-```
-
-#### Proxy Strategy
-
-```js
-[
-  {
-    name: 'response_time.timer.raw',
+    name: 'response_time.timer',
     columns: ['value', 'time'],
     points: [[170, 1384472029572]]
   }
@@ -196,37 +112,23 @@ StatsD packet `response_time:170|ms` as InfluxDB event:
 
 StatsD packet `bytes:123|g` as InfluxDB event:
 
-#### Flush Strategy
-
 ```js
 [
   {
     name: 'bytes.gauge',
-    columns: ['value', 'time'],
-    points: [[123, 1384798553000]]
-  }
-]
-```
-
-#### Proxy Strategy
-
-```js
-[
-  {
-    name: 'bytes.gauge.raw',
     columns: ['value', 'time'],
     points: [['gauge', 123, 1384472029572]]
   }
 ]
 ```
 
-## Proxy Strategy Notes
+## Notes
 
 ### Event Buffering
 
 To avoid one HTTP request per StatsD packet, the InfluxDB backend buffers the
 incoming events and flushes the buffer on a regular basis. The current default
-is 1000ms. Use the `influxdb.proxy.flushInterval` to change the interval.
+is 1000ms. Use the `influxdb.flushInterval` to change the interval.
 
 This might become a problem with lots of incoming events.
 
@@ -235,7 +137,7 @@ The payload of a HTTP request might look like this:
 ```js
 [
   {
-    name: 'requests.counter.raw',
+    name: 'requests.counter',
     columns: ['value', 'time'],
     points: [
       [1, 1384472029572],
@@ -244,7 +146,7 @@ The payload of a HTTP request might look like this:
     ]
   },
   {
-    name: 'response_time.timer.raw',
+    name: 'response_time.timer',
     columns: ['value', 'time'],
     points: [
       [170, 1384472029570],
@@ -254,7 +156,7 @@ The payload of a HTTP request might look like this:
     ]
   },
   {
-    name: 'bytes.gauge.raw',
+    name: 'bytes.gauge',
     columns: ['value', 'time'],
     points: [
       [123, 1384472029572],
